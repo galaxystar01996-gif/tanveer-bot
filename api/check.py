@@ -1,7 +1,7 @@
 from http.server import BaseHTTPRequestHandler
-import os, json, requests, psycopg2, datetime, hashlib, hmac, time
+import os, json, requests, psycopg2, datetime, time
 from urllib.parse import urlparse, parse_qs
-from bs4 import BeautifulSoup, Comment
+from bs4 import BeautifulSoup
 
 # ==================================
 # 🔧 CONFIGURATION
@@ -11,11 +11,6 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_GROUP_ID = "-4789301236"  # Telegram group ID
 CRON_SECRET = os.getenv("CRON_SECRET")
-
-# Amazon credentials
-AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
-AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
-AMAZON_PARTNER_TAG = os.getenv("AMAZON_PARTNER_TAG")
 
 # Flipkart Proxy (AlwaysData)
 FLIPKART_PROXY_URL = "https://rknldeals.alwaysdata.net/flipkart_check"
@@ -41,24 +36,25 @@ class handler(BaseHTTPRequestHandler):
             # ✅ Only send Telegram message if at least one product is available
             if in_stock_messages:
                 final_message = (
-                    "🔥 *Stock Alert!*\n\n" +
-                    "\n\n".join(in_stock_messages) +
-                    "\n\n" + summary
+                    "🔥 *Stock Alert!*\n\n"
+                    + "\n\n".join(in_stock_messages)
+                    + "\n\n"
+                    + summary
                 )
                 send_telegram_message(final_message)
                 print("[info] ✅ Telegram message sent with available products.")
             else:
                 print("[info] ❌ No products in stock — skipping Telegram notification.")
 
-            # ✅ Always respond to HTTP request with status summary
+            # ✅ Always respond with summary
             self.send_response(200)
             self.send_header("Content-type", "application/json")
             self.end_headers()
-            self.wfile.write(json.dumps({
-                "status": "ok",
-                "found": len(in_stock_messages),
-                "summary": summary
-            }).encode())
+            self.wfile.write(
+                json.dumps(
+                    {"status": "ok", "found": len(in_stock_messages), "summary": summary}
+                ).encode()
+            )
 
         except Exception as e:
             print(f"[error] {e}")
@@ -79,7 +75,13 @@ def get_products_from_db():
     conn.close()
 
     products_list = [
-        {"name": row[0], "url": row[1], "productId": row[2], "storeType": row[3], "affiliateLink": row[4]}
+        {
+            "name": row[0],
+            "url": row[1],
+            "productId": row[2],
+            "storeType": row[3],
+            "affiliateLink": row[4],
+        }
         for row in products
     ]
     print(f"[info] Loaded {len(products_list)} products from database.")
@@ -98,7 +100,7 @@ def send_telegram_message(message):
         "chat_id": TELEGRAM_GROUP_ID,
         "text": message,
         "parse_mode": "Markdown",
-        "disable_web_page_preview": True
+        "disable_web_page_preview": True,
     }
 
     try:
@@ -129,10 +131,10 @@ def check_croma(product, pincode):
                         "lineId": "1",
                         "requiredQty": "1",
                         "shipToAddress": {"zipCode": pincode},
-                        "extn": {"widerStoreFlag": "N"}
+                        "extn": {"widerStoreFlag": "N"},
                     }
                 ]
-            }
+            },
         }
     }
     headers = {
@@ -140,7 +142,7 @@ def check_croma(product, pincode):
         "content-type": "application/json",
         "oms-apim-subscription-key": "1131858141634e2abe2efb2b3a2a2a5d",
         "origin": "https://www.croma.com",
-        "referer": "https://www.croma.com/"
+        "referer": "https://www.croma.com/",
     }
 
     try:
@@ -185,8 +187,9 @@ def check_flipkart(product, pincode="132001"):
         if available:
             price = listing.get("pricing", {}).get("finalPrice", {}).get("decimalValue", None)
             print(f"[FLIPKART] ✅ {product['name']} deliverable to {pincode}")
-            return f"✅ *Flipkart*\n[{product['name']}]({product['affiliateLink'] or product['url']})" + (
-                f"\n💰 Price: ₹{price}" if price else ""
+            return (
+                f"✅ *Flipkart*\n[{product['name']}]({product['affiliateLink'] or product['url']})"
+                + (f"\n💰 Price: ₹{price}" if price else "")
             )
 
         print(f"[FLIPKART] ❌ {product['name']} not deliverable at {pincode}")
@@ -197,94 +200,70 @@ def check_flipkart(product, pincode="132001"):
         return None
 
 # ==================================
-# 🧾 AMAZON CHECKER
+# 🧾 AMAZON HTML PARSER CHECKER
 # ==================================
-def sign(key, msg):
-    return hmac.new(key, msg.encode("utf-8"), hashlib.sha256).digest()
-
-def get_signature_key(key, date_stamp, region_name, service_name):
-    k_date = sign(("AWS4" + key).encode("utf-8"), date_stamp)
-    k_region = sign(k_date, region_name)
-    k_service = sign(k_region, service_name)
-    return sign(k_service, "aws4_request")
-
 def check_amazon(product):
-    asin = product["productId"]
-    method = "POST"
-    endpoint = "https://webservices.amazon.in/paapi5/getitems"
-    region = "eu-west-1"
-    service = "ProductAdvertisingAPI"
-    t = datetime.datetime.utcnow()
-    amz_date = t.strftime("%Y%m%dT%H%M%SZ")
-    date_stamp = t.strftime("%Y%m%d")
-
-    payload = {
-        "ItemIds": [asin],
-        "Resources": [
-            "ItemInfo.Title",
-            "Offers.Listings.Price",
-            "Offers.Listings.Availability.Message"
-        ],
-        "PartnerTag": AMAZON_PARTNER_TAG,
-        "PartnerType": "Associates",
-        "Marketplace": "www.amazon.in"
-    }
-
-    canonical_uri = "/paapi5/getitems"
-    canonical_headers = (
-        f"content-encoding:amz-1.0\n"
-        f"host:{urlparse(endpoint).netloc}\n"
-        f"x-amz-date:{amz_date}\n"
-        f"x-amz-target:com.amazon.paapi5.v1.ProductAdvertisingAPIv1.GetItems\n"
-    )
-    signed_headers = "content-encoding;host;x-amz-date;x-amz-target"
-    payload_hash = hashlib.sha256(json.dumps(payload).encode("utf-8")).hexdigest()
-    canonical_request = f"{method}\n{canonical_uri}\n\n{canonical_headers}\n{signed_headers}\n{payload_hash}"
-
-    algorithm = "AWS4-HMAC-SHA256"
-    credential_scope = f"{date_stamp}/{region}/{service}/aws4_request"
-    string_to_sign = (
-        f"{algorithm}\n{amz_date}\n{credential_scope}\n"
-        f"{hashlib.sha256(canonical_request.encode('utf-8')).hexdigest()}"
-    )
-
-    signing_key = get_signature_key(AWS_SECRET_ACCESS_KEY, date_stamp, region, service)
-    signature = hmac.new(signing_key, string_to_sign.encode("utf-8"), hashlib.sha256).hexdigest()
-    authorization_header = (
-        f"{algorithm} Credential={AWS_ACCESS_KEY_ID}/{credential_scope}, "
-        f"SignedHeaders={signed_headers}, Signature={signature}"
-    )
+    """Check stock availability by scraping the Amazon product page."""
+    url = product["url"]
+    print(f"[AMAZON] Checking: {url}")
 
     headers = {
-        "Content-Encoding": "amz-1.0",
-        "Content-Type": "application/json; charset=UTF-8",
-        "X-Amz-Date": amz_date,
-        "X-Amz-Target": "com.amazon.paapi5.v1.ProductAdvertisingAPIv1.GetItems",
-        "Authorization": authorization_header,
-        "Accept": "application/json, text/javascript",
-        "Host": urlparse(endpoint).netloc,
+        "authority": "www.amazon.in",
+        "method": "GET",
+        "scheme": "https",
+        "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "accept-language": "en-US,en;q=0.9",
+        "cache-control": "max-age=0",
+        "sec-ch-ua": '"Not_A Brand";v="99", "Google Chrome";v="137", "Chromium";v="137"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+        "upgrade-insecure-requests": "1",
+        "user-agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/137.0.0.0 Safari/537.36"
+        ),
     }
 
     try:
-        res = requests.post(endpoint, headers=headers, data=json.dumps(payload), timeout=10)
-        data = res.json()
+        res = requests.get(url, headers=headers, timeout=20)
+        print(f"[AMAZON] Status code: {res.status_code}")
+        html = res.text
+        soup = BeautifulSoup(html, "html.parser")
 
-        if res.status_code == 200 and "ItemsResult" in data:
-            item = data["ItemsResult"]["Items"][0]
-            title = item["ItemInfo"]["Title"]["DisplayValue"]
-            availability = item["Offers"]["Listings"][0]["Availability"]["Message"]
-            price = item["Offers"]["Listings"][0]["Price"]["DisplayAmount"]
-            print(f"[AMAZON] ✅ {title} in stock.")
-            return f"✅ *Amazon*\n[{title}]({product['affiliateLink'] or product['url']})\n💰 {price}\n📦 {availability}"
+        title_el = soup.select_one("#productTitle")
+        price_el = soup.select_one(".a-price .a-offscreen")
+        availability_el = soup.select_one("#availability span")
 
-        if "TooManyRequests" in str(data):
-            print(f"[AMAZON] ⚠️ Skipping {product['name']} (throttled).")
+        title = title_el.get_text(strip=True) if title_el else product["name"]
+        price = price_el.get_text(strip=True) if price_el else None
+        availability = availability_el.get_text(strip=True).lower() if availability_el else ""
+
+        available_phrases = [
+            "in stock",
+            "free delivery",
+            "delivery by",
+            "usually dispatched",
+            "get it by",
+            "available",
+        ]
+        available = any(phrase in availability for phrase in available_phrases)
+
+        if available:
+            print(f"[AMAZON] ✅ {title} is available at {price}")
+            return (
+                f"✅ *Amazon*\n"
+                f"[{title}]({product['affiliateLink'] or url})"
+                + (f"\n💰 {price}" if price else "")
+            )
+        else:
+            print(f"[AMAZON] ❌ {title} appears unavailable.")
+            print(f"[debug] Availability text: '{availability}'")
             return None
 
-        print(f"[AMAZON] ⚠️ No stock info for {product['name']}")
     except Exception as e:
-        print(f"[error] Amazon check failed for {product['name']}: {e}")
-    return None
+        print(f"[error] Amazon HTML check failed for {product['name']}: {e}")
+        return None
 
 # ==================================
 # 🚀 MAIN LOGIC
