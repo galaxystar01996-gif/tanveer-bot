@@ -76,7 +76,7 @@ def send_telegram_message(message):
         if not chat_id.strip():
             continue
             
-        url = f"https{api.telegram.org/bot}{TELEGRAM_BOT_TOKEN}/sendMessage"
+        url = f"https://api.telegram.org/bot/{TELEGRAM_BOT_TOKEN}/sendMessage"
         payload = {
             'chat_id': chat_id.strip(),
             'text': message,
