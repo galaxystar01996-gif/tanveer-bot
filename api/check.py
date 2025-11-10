@@ -64,18 +64,14 @@ def get_products_from_db():
 
 # --- 4. TELEGRAM HELPERS ---
 def get_all_chat_ids():
-    """Fetch all unique chat IDs that started the bot."""
-    try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates"
-        res = requests.get(url, timeout=10)
-        res.raise_for_status()
-        updates = res.json().get("result", [])
-        ids = {u["message"]["chat"]["id"] for u in updates if "message" in u and "chat" in u}
-        print(f"Fetched {len(ids)} Telegram subscribers.")
-        return list(ids)
-    except Exception as e:
-        print(f"⚠️ Failed to fetch Telegram chat IDs: {e}")
-        return []
+   return [
+        1301703380, 7500224400, 7570729917, 798436912, 6878100797, 849850934,
+        1476695901, 1438419270, 667911343, 574316265, 5871190519, 939758815,
+        6272441906, 5756316614, 1221629915, 5339576661, 766044262, 1639167211,
+        1642837409, 978243265, 871796135, 995543877, 5869017768, 1257253967,
+        820803336, 1794830835, 6137007196, 1460192633, 691495606, 6644657779,
+        837532484, 8196689182, 1813686494, 5312984739
+    ]
 
 def send_telegram_message(message):
     """Send a Telegram message to all chat IDs dynamically fetched."""
