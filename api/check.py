@@ -38,18 +38,27 @@ class handler(BaseHTTPRequestHandler):
         try:
             in_stock_messages, summary = main_logic()
 
-            final_message = (
-                "🔥 *Stock Alert!*\n\n" + "\n\n".join(in_stock_messages) + "\n\n" + summary
-                if in_stock_messages
-                else "❌ *No stock available currently.*\n\n" + summary
-            )
+            # ✅ Only send Telegram message if at least one product is available
+            if in_stock_messages:
+                final_message = (
+                    "🔥 *Stock Alert!*\n\n" +
+                    "\n\n".join(in_stock_messages) +
+                    "\n\n" + summary
+                )
+                send_telegram_message(final_message)
+                print("[info] ✅ Telegram message sent with available products.")
+            else:
+                print("[info] ❌ No products in stock — skipping Telegram notification.")
 
-            send_telegram_message(final_message)
-
+            # ✅ Always respond to HTTP request with status summary
             self.send_response(200)
             self.send_header("Content-type", "application/json")
             self.end_headers()
-            self.wfile.write(json.dumps({"status": "ok", "found": len(in_stock_messages)}).encode())
+            self.wfile.write(json.dumps({
+                "status": "ok",
+                "found": len(in_stock_messages),
+                "summary": summary
+            }).encode())
 
         except Exception as e:
             print(f"[error] {e}")
@@ -174,8 +183,11 @@ def check_flipkart(product, pincode="132001"):
         available = listing.get("available", False)
 
         if available:
+            price = listing.get("pricing", {}).get("finalPrice", {}).get("decimalValue", None)
             print(f"[FLIPKART] ✅ {product['name']} deliverable to {pincode}")
-            return f"✅ *Flipkart*\n[{product['name']}]({product['affiliateLink'] or product['url']})"
+            return f"✅ *Flipkart*\n[{product['name']}]({product['affiliateLink'] or product['url']})" + (
+                f"\n💰 Price: ₹{price}" if price else ""
+            )
 
         print(f"[FLIPKART] ❌ {product['name']} not deliverable at {pincode}")
         return None
@@ -311,11 +323,14 @@ def main_logic():
                 in_stock.append(result)
 
     duration = round(time.time() - start_time, 2)
+    timestamp = datetime.datetime.now().strftime("%d %b %Y %I:%M %p")
+
     summary = (
         f"🟢 *Croma:* {croma_count}/{croma_total}\n"
         f"🟣 *Flipkart:* {flip_count}/{flip_total}\n"
         f"🟡 *Amazon:* {amazon_count}/{amazon_total}\n"
         f"📦 *Total:* {len(in_stock)} available\n"
+        f"🕒 *Checked:* {timestamp}\n"
         f"⏱ *Time taken:* {duration}s"
     )
 
