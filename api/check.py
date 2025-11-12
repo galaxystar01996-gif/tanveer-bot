@@ -9,7 +9,7 @@ from bs4 import BeautifulSoup
 PINCODES_TO_CHECK = ["132001"]
 DATABASE_URL = os.getenv("DIRECT_URL")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_GROUP_ID = "-5021367200" # Telegram group ID
+TELEGRAM_GROUP_ID = str(os.getenv("TELEGRAM_GROUP_ID")) # Telegram group ID
 CRON_SECRET = os.getenv("CRON_SECRET")
 
 # Flipkart Proxy (AlwaysData)
