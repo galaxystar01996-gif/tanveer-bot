@@ -2,6 +2,7 @@ from http.server import BaseHTTPRequestHandler
 import os, json, requests, psycopg2, datetime, time
 from urllib.parse import urlparse, parse_qs
 from bs4 import BeautifulSoup
+import re
 
 # ==================================
 # 🔧 CONFIGURATION
@@ -71,7 +72,6 @@ class handler(BaseHTTPRequestHandler):
 def get_products_from_db():
     print("[info] Connecting to database...")
     # NOTE: psycopg2 should be installed if running this locally: pip install psycopg2-binary
-    # This line assumes DATABASE_URL is set in environment variables (Vercel/hosting environment).
     conn = psycopg2.connect(DATABASE_URL) 
     cursor = conn.cursor()
     # Ensure the query selects all necessary columns, including affiliate_link
@@ -346,7 +346,7 @@ def check_amazon(product):
         return None
 
 # ==================================
-# 🌐 RELIANCE DIGITAL API CHECKER
+# 🌐 RELIANCE DIGITAL API CHECKER (MODIFIED TO USE DB ID)
 # ==================================
 def check_reliance_digital(product, pincode):
     """
@@ -363,88 +363,6 @@ def check_reliance_digital(product, pincode):
         return None
 
     # ----------------------------------------
-    # STEP 1: Dynamically Get Article ID (DELETED)
-    # The ID is now fetched by the Node.js frontend and stored in product["productId"].
-    # ----------------------------------------
-
-    # ----------------------------------------
-    # STEP 2: Check Stock using the Article ID
-    # ----------------------------------------
-    print(f"[RD] Checking stock: {name} (ID: {article_id}) for Pincode {pincode}")
-
-    inventory_url = "https://www.reliancedigital.in/ext/raven-api/inventory/multi/articles-v2"
-    
-    inventory_headers = {
-        "accept": "application/json, text/plain, */*",
-        "content-type": "application/json",
-        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
-        "origin": "https://www.reliancedigital.in",
-        "referer": "https://www.reliancedigital.in/",
-    }
-
-    # API Payload 
-    payload = {
-        "articles": [
-            {
-                "article_id": str(article_id),
-                "custom_json": {}, 
-                "quantity": 1
-            }
-        ],
-        "phone_number": "0",
-        "pincode": str(pincode),
-        "request_page": "pdp"
-    }
-
-    try:
-        res = requests.post(inventory_url, headers=inventory_headers, json=payload, timeout=20)
-        res.raise_for_status() 
-        data = res.json()
-        
-        article_data = data.get("data", {}).get("articles", [])
-        if not article_data:
-            return None
-
-        article = article_data[0]
-        
-        # Determine stock status: Available if there is NO meaningful error type
-        article_error = article.get("error", {})
-        error_type = article_error.get("type")
-        
-        is_in_stock = not (error_type and error_type in ["OutOfStockError", "FaultyArticleError"])
-        
-        # Try to extract price from the product page using BS (fallback)
-        price = None
-        try:
-            res_html = requests.get(url, headers=inventory_headers, timeout=10)
-            soup = BeautifulSoup(res_html.text, "html.parser")
-            price_el = soup.select_one('.pdpPrice, .product-price .amount, .final-price, [class*="Price"]')
-            if price_el:
-                # Clean up the price string
-                price = price_el.get_text(strip=True).replace('\n', ' ').replace('₹', '').strip() 
-        except Exception:
-            pass 
-
-        if is_in_stock:
-            print(f"[RD] ✅ {name} is IN STOCK at {pincode}.")
-            return (
-                f"✅ *Reliance Digital*\n"
-                f"[{name}]({product['affiliateLink'] or url})"
-                + (f"\n💰 Price: ₹{price}" if price else "")
-            )
-        else:
-            error_message = article_error.get("message", "Stock Error")
-            print(f"[RD] ❌ {name} is UNAVAILABLE at {pincode}. (Error: {error_message})")
-            return None
-
-    except requests.exceptions.RequestException as e:
-        print(f"[error] Reliance Digital inventory check failed for {name}: {e}")
-        return None
-    except Exception as e:
-        print(f"[error] Reliance Digital check failed for {name} (general): {e}")
-        return None
-
-    # ----------------------------------------
     # STEP 2: Check Stock using the Article ID
     # ----------------------------------------
     print(f"[RD] Checking stock: {name} (ID: {article_id}) for Pincode {pincode}")
@@ -522,7 +440,7 @@ def check_reliance_digital(product, pincode):
         return None
 
 # ==================================
-# 📱 IQOO HTML PARSER CHECKER
+# 📱 IQOO HTML PARSER CHECKER (MODIFIED)
 # ==================================
 def check_iqoo(product):
     """Check stock availability for an iQOO product by scraping its product page."""
@@ -542,6 +460,10 @@ def check_iqoo(product):
         html = res.text
         soup = BeautifulSoup(html, "html.parser")
 
+        # --- EXTRACT NAME from <title> or fallback ---
+        page_title = soup.find('title')
+        product_name = page_title.get_text(strip=True).split('|')[0].strip() if page_title else product["name"]
+        
         # --- KEY SCRAPING LOGIC ---
         buy_now_button = soup.select_one('button:contains("Buy Now"), a:contains("Buy Now")')
         out_of_stock_phrases = ["out of stock", "currently unavailable", "notify me"]
@@ -551,7 +473,6 @@ def check_iqoo(product):
         availability_text = "Status indeterminate."
         
         if buy_now_button:
-            # Check for common disabled attributes/classes
             is_disabled = buy_now_button.get('disabled') or 'disabled' in buy_now_button.get('class', []) or 'out-of-stock' in buy_now_button.get('class', [])
             
             if is_disabled:
@@ -565,25 +486,33 @@ def check_iqoo(product):
              is_available = False
              availability_text = "Explicit 'out of stock' phrase found in page text."
              
-        # Fallback: if no clear button found, check for explicit out of stock phrases
         if not buy_now_button and any(phrase in page_text for phrase in out_of_stock_phrases):
              is_available = False
              availability_text = "No clear button, but OOS text found."
 
-        # Try to find a price for reporting
+        # --- EXTRACT PRICE AND OFFERS ---
         price_el = soup.select_one('.price-tag, .product-price, .current_price, .selling-price')
         price = price_el.get_text(strip=True) if price_el else None
+        
+        offer_el = soup.select_one('.product-offers, .discount-details, .emi-details')
+        offers = offer_el.get_text(strip=True) if offer_el else None
+        
+        price_info = ""
+        if price:
+            price_info += f"\n💰 Price: {price}"
+        if offers and len(offers) < 150: # Avoid scraping huge blocks of text
+             price_info += f"\n🎁 Offers: {offers}"
 
 
         if is_available:
-            print(f"[IQOO] ✅ {product['name']} is available.")
+            print(f"[IQOO] ✅ {product_name} is available.")
             return (
                 f"✅ *iQOO*\n"
-                f"[{product['name']}]({product['affiliateLink'] or url})"
-                + (f"\n💰 Price: {price}" if price else "")
+                f"[{product_name}]({product['affiliateLink'] or url})"
+                f"{price_info}"
             )
         else:
-            print(f"[IQOO] ❌ {product['name']} appears unavailable. ({availability_text})")
+            print(f"[IQOO] ❌ {product_name} appears unavailable. ({availability_text})")
             return None
 
     except Exception as e:
@@ -591,16 +520,15 @@ def check_iqoo(product):
         return None
 
 # ==================================
-# 🤳 VIVO HTML PARSER CHECKER
+# 🤳 VIVO HTML PARSER CHECKER (MODIFIED)
 # ==================================
 def check_vivo(product):
     """
     Check stock availability for a Vivo product by scraping its product page.
-    This function uses similar logic to iQOO, checking for button status and OOS text.
     """
     url = product["url"]
-    name = product["name"]
-    print(f"[VIVO] Checking: {name} at {url}")
+    original_name = product["name"]
+    print(f"[VIVO] Checking: {original_name} at {url}")
 
     headers = {
         "User-Agent": (
@@ -616,6 +544,10 @@ def check_vivo(product):
         html = res.text
         soup = BeautifulSoup(html, "html.parser")
 
+        # --- EXTRACT NAME from <title> or fallback ---
+        page_title = soup.find('title')
+        product_name = page_title.get_text(strip=True).split('|')[0].strip() if page_title else original_name
+
         # --- KEY SCRAPING LOGIC ---
         buy_now_link = soup.select_one('a.buyNow, .addToCart, .buyButton')
         out_of_stock_phrases = ["out of stock", "notify me", "currently unavailable"]
@@ -625,7 +557,6 @@ def check_vivo(product):
         availability_text = "Status indeterminate."
 
         if buy_now_link:
-            # Check for disabled class
             is_disabled = 'disabled' in buy_now_link.get('class', [])
             
             if is_disabled:
@@ -635,34 +566,41 @@ def check_vivo(product):
                 is_available = True
                 availability_text = f"Active Buy Now link found."
         
-        # Check for explicit OOS phrases
         if not is_available and any(phrase in page_text_lower for phrase in out_of_stock_phrases):
              is_available = False
              availability_text = "Explicit 'out of stock' phrase found in page text."
-        
-        # Fallback: If no clear button found, check OOS text
+             
         if not buy_now_link and any(phrase in page_text_lower for phrase in out_of_stock_phrases):
              is_available = False
              availability_text = "No active Buy Now link found."
 
-        # Try to find a price for reporting
+        # --- EXTRACT PRICE AND OFFERS ---
         price_el = soup.select_one('.price-tag, .product-price, .current_price, .selling-price, .js-final-price')
         price = price_el.get_text(strip=True) if price_el else None
+        
+        offer_el = soup.select_one('.product-offers, .discount-details, .emi-details')
+        offers = offer_el.get_text(strip=True) if offer_el else None
+        
+        price_info = ""
+        if price:
+            price_info += f"\n💰 Price: {price}"
+        if offers and len(offers) < 150: # Avoid scraping huge blocks of text
+             price_info += f"\n🎁 Offers: {offers}"
 
 
         if is_available:
-            print(f"[VIVO] ✅ {name} is available.")
+            print(f"[VIVO] ✅ {product_name} is available.")
             return (
                 f"✅ *Vivo*\n"
-                f"[{name}]({product['affiliateLink'] or url})"
-                + (f"\n💰 Price: {price}" if price else "")
+                f"[{product_name}]({product['affiliateLink'] or url})"
+                f"{price_info}"
             )
         else:
-            print(f"[VIVO] ❌ {name} appears unavailable. ({availability_text})")
+            print(f"[VIVO] ❌ {product_name} appears unavailable. ({availability_text})")
             return None
 
     except Exception as e:
-        print(f"[error] Vivo check failed for {name}: {e}")
+        print(f"[error] Vivo check failed for {original_name}: {e}")
         return None
 
 # ==================================
@@ -731,7 +669,7 @@ def main_logic():
             rd_total += 1
             # Check RD against all pincodes until a hit is found
             for pincode in PINCODES_TO_CHECK:
-                # The product['productId'] now contains the slug/URL needed for the dynamic lookup
+                # The product['productId'] now contains the internal Article ID
                 result = check_reliance_digital(product, pincode)
                 if result:
                     rd_count += 1
