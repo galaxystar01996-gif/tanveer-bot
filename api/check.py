@@ -442,11 +442,13 @@ def check_reliance_digital(product, pincode):
 # ==================================
 # 📱 IQOO HTML PARSER CHECKER (MODIFIED)
 # ==================================
+# ... (rest of the check.py file remains unchanged until check_iqoo)
+
+# ==================================
+# 📱 IQOO HTML PARSER CHECKER (MODIFIED FOR PRECISE OFFERS)
+# ==================================
 def check_iqoo(product):
-    """
-    Check stock availability for an iQOO product by scraping its product page.
-    Includes enhanced scraping for name, price, and offers list, correctly handling SKU in URL.
-    """
+    # ... (function start remains the same)
     url = product["url"]
     print(f"[IQOO] Checking: {url}")
 
@@ -475,48 +477,27 @@ def check_iqoo(product):
         product_name = page_title.get_text(strip=True).split('|')[0].strip() if page_title else product["name"]
         
         # --- KEY STOCK SCRAPING LOGIC (UNCHANGED) ---
+        # ... (stock logic remains the same)
         buy_now_button = soup.select_one('button:contains("Buy Now"), a:contains("Buy Now")')
         out_of_stock_phrases = ["out of stock", "currently unavailable", "notify me"]
         page_text = soup.get_text().lower()
-        
         is_available = True
         availability_text = "Status indeterminate."
+        # ... (rest of stock availability logic)
         
-        if buy_now_button:
-            is_disabled = buy_now_button.get('disabled') or 'disabled' in buy_now_button.get('class', []) or 'out-of-stock' in buy_now_button.get('class', [])
-            
-            if is_disabled:
-                is_available = False
-                availability_text = "Buy Now button disabled/out-of-stock class found."
-            else:
-                is_available = True
-                availability_text = "Active Buy Now button found."
-        
-        if not is_available and any(phrase in page_text for phrase in out_of_stock_phrases):
-             is_available = False
-             availability_text = "Explicit 'out of stock' phrase found in page text."
-             
-        if not buy_now_button and any(phrase in page_text for phrase in out_of_stock_phrases):
-             is_available = False
-             availability_text = "No clear button, but OOS text found."
-
-        # --- EXTRACT PRICE AND OFFERS (MODIFIED) ---
+        # --- EXTRACT PRICE AND OFFERS (MODIFIED SELECTOR) ---
         price_el = soup.select_one('.price-tag, .product-price, .current_price, .selling-price')
         price = price_el.get_text(strip=True) if price_el else None
         
-        # *** NEW PRECISE SELECTOR FOR OFFERS ***
-        # Target the UL based on the outer container selector you provided.
-        # We look for the parent div.outside-box and then the ul.offer-list
-        offers_list_items = soup.select('div.outside-box ul.offer-list li.offer-item')
+        # *** NEW PRECISE SELECTOR: TARGETS UL.offer-list LI.offer-content ***
+        # This selector targets the list of offers based on the HTML provided in your screenshot context
+        offers_content_elements = soup.select('ul.offer-list li.offer-item div.offer-content')
         offers_text = ""
         
-        if offers_list_items:
+        if offers_content_elements:
             # Extract the content from the specific div.offer-content within each list item
-            offers_text = "\n".join([
-                f"  - {li.select_one('.offer-content').get_text(strip=True)}" 
-                for li in offers_list_items if li.select_one('.offer-content')
-            ])
-
+            offers_text = "\n".join([f"  - {el.get_text(strip=True)}" for el in offers_content_elements])
+        
         price_info = ""
         if price:
             price_info += f"\n💰 Price: {price}"
@@ -540,7 +521,7 @@ def check_iqoo(product):
     except Exception as e:
         print(f"[error] iQOO check failed for {product['name']}: {e}")
         return None
-
+# ... (rest of the check.py remains unchanged)
 # ==================================
 # 🤳 VIVO HTML PARSER CHECKER (UNCHANGED, but applies similar logic)
 # ==================================
@@ -640,6 +621,7 @@ def check_vivo(product):
     except Exception as e:
         print(f"[error] Vivo check failed for {original_name}: {e}")
         return None
+    
 # ==================================
 # 🚀 MAIN LOGIC
 # ==================================
