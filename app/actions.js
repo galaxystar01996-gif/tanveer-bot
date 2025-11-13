@@ -7,7 +7,7 @@ import { revalidatePath } from 'next/cache';
 
 /**
  * Fetches the Reliance Digital product page and scrapes the internal Article ID (Item Code).
- * It attempts to find the ID in the specifications list.
+ * This replaces the need for the Python scraper in this case.
  * @param {string} url - The full Reliance Digital product URL.
  * @returns {Promise<string|null>} The internal 9-digit Article ID string or null.
  */
@@ -19,8 +19,6 @@ async function getRelianceDigitalArticleId(url) {
                 // Using a mobile-like user agent to ensure correct page structure is received
                 'User-Agent': 'Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Mobile Safari/537.36',
             },
-            // Note: Node's native fetch doesn't support a 'timeout' option in headers directly.
-            // A controller/wrapper would be needed for true timeout control, but we rely on default for brevity.
         });
 
         if (!response.ok) {
@@ -68,15 +66,19 @@ async function getProductDetails(url, partNumber) {
     try {
         const parsedUrl = new URL(url);
 
-        // --- NEW VIVO LOGIC --- (UNCHANGED)
+        // --- NEW VIVO LOGIC (FIXED) ---
         if (parsedUrl.hostname.includes('vivo.com') && !parsedUrl.hostname.includes('iqoo.com')) {
             const pathParts = parsedUrl.pathname.split('/').filter(p => p.length > 0);
-            const pid = pathParts[pathParts.length - 1];
+            const pid = pathParts[pathParts.length - 1]; 
 
-            if (!pid || pid.length < 4) throw new Error('Could not find a valid product ID in the Vivo URL.');
+            if (!pid) throw new Error('Could not find a valid product ID in the Vivo URL.');
 
-            const name = (pathParts[pathParts.length - 2] || 'Vivo Product')
-                .replace(/-/g, ' ').slice(0, 50) + '...';
+            // Use the second-to-last part for the name, falling back to a default if it's missing or just 'product'
+            const nameSegment = pathParts.length >= 2 ? pathParts[pathParts.length - 2] : 'Vivo Product';
+            const rawName = (nameSegment === 'product' || nameSegment.match(/^\d+$/) ? 'Vivo Product' : nameSegment);
+            
+            const name = rawName
+                .replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase()).slice(0, 50) + '...';
 
             return {
                 name: `(Vivo) ${name}`,
@@ -86,15 +88,19 @@ async function getProductDetails(url, partNumber) {
             };
         }
 
-        // --- NEW IQOO LOGIC --- (UNCHANGED)
+        // --- NEW IQOO LOGIC (FIXED) ---
         if (parsedUrl.hostname.includes('iqoo.com')) {
             const pathParts = parsedUrl.pathname.split('/').filter(p => p.length > 0);
-            const pid = pathParts[pathParts.length - 1];
+            const pid = pathParts[pathParts.length - 1]; // e.g., '2057' or 'iqoo-z7-pro'
 
-            if (!pid || pid.length < 5) throw new Error('Could not find a valid product ID in the iQOO URL.');
+            if (!pid) throw new Error('Could not find a valid product ID in the iQOO URL.');
 
-            const name = (pathParts[pathParts.length - 2] || 'iQOO Product')
-                .replace(/-/g, ' ').slice(0, 50) + '...';
+            // Use the second-to-last part for the name, falling back to a default if it's missing or just 'product'
+            const nameSegment = pathParts.length >= 2 ? pathParts[pathParts.length - 2] : 'iQOO Product';
+            const rawName = (nameSegment === 'product' || nameSegment.match(/^\d+$/) ? 'iQOO Product' : nameSegment);
+
+            const name = rawName
+                .replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase()).slice(0, 50) + '...';
 
             return {
                 name: `(iQOO) ${name}`,
@@ -104,7 +110,7 @@ async function getProductDetails(url, partNumber) {
             };
         }
 
-        // 🟢 --- RELIANCE DIGITAL LOGIC (NOW WITH SCRAPING) ---
+        // 🟢 --- RELIANCE DIGITAL LOGIC (WITH SCRAPING) ---
         if (parsedUrl.hostname.includes('reliancedigital.in')) {
             // 1. SCALING ACTION: Scrape the actual internal Article ID
             const internalArticleId = await getRelianceDigitalArticleId(url);
@@ -124,7 +130,6 @@ async function getProductDetails(url, partNumber) {
                 // Store the actual scraped internal Article ID for API tracking
                 productId: internalArticleId, 
                 storeType: 'reliance_digital', 
-                // We save the original slug/url part just in case, for reference
                 partNumber: slug 
             };
         }
